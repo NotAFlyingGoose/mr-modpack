@@ -98,7 +98,14 @@ a {
   min-width: 100%;
   max-width: 100%;
   width: 100%;
-  overflow-x: scroll;
+
+  $height: 70vh;
+
+  min-height: $height;
+  max-height: $height;
+  height: $height;
+
+  overflow: scroll;
 
   border-radius: 1em;
 }
@@ -131,10 +138,31 @@ tbody {
       display: block;
     }
 
+    // for a sticky left column
     th:first-child {
       position: sticky;
       left: 0;
+      // z-index: 3;
+    }
+
+    // for a sticky top row
+    &:first-child {
+      position: sticky;
+      top: 0;
       z-index: 2;
+      background-color: $light-background;
+
+      // the very top left "Mod" header should remain above everything
+      th:first-child {
+        z-index: 4;
+      }
+
+      th, td {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        background-color: $light-background;
+      }
     }
 
     &:nth-child(odd) {

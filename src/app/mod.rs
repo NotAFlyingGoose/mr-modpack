@@ -14,7 +14,6 @@ use itertools::Itertools;
 use leptos::{html::Input, leptos_dom::logging::console_log, *};
 use leptos_meta::*;
 use leptos_router::*;
-use leptos_use::{storage::use_local_storage, utils::JsonCodec};
 
 use self::modrinth::{Collection, ProjectKey};
 
