@@ -1,7 +1,13 @@
 # Mr. Modpack
 
-A tool that takes a list of mods, and figures out the optimum way to turn them into a modpack.
+A web-based tool for taking a list of mods, and calculating the optimum minecraft version to use them in a modpack.
+
+```shell
+git clone https://github.com/NotAFlyingGoose/mr-modpack.git
+cd mr-modpack
+cargo run
+```
 
 ## License
 
-Mr. Modpack is distributed under the terms of both the MIT license and the Apache License (Version 2.0). Clauses have been added to these licenses to restrict this software from being used in AI training datasets or AI technologies. See [LICENSE-APACHE-NON-AI](./LICENSE-APACHE-NON-AI) and [LICENSE-MIT-NON-AI](./LICENSE-MIT-NON-AI) for details.
+Mr. Modpack is distributed under the terms of the GNU GPLv3 license, the MIT license, and the Apache License (Version 2.0). See [LICENSE-GPL](./LICENSE-GPL), [LICENSE-MIT](./LICENSE-MIT), and [LICENSE-APACHE](./LICENSE-APACHE) for details.
