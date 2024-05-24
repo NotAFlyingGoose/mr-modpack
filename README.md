@@ -10,4 +10,4 @@ cargo run
 
 ## License
 
-Mr. Modpack is distributed under the terms of the GNU GPLv3 license, the MIT license, and the Apache License (Version 2.0). See [LICENSE-GPL](./LICENSE-GPL), [LICENSE-MIT](./LICENSE-MIT), and [LICENSE-APACHE](./LICENSE-APACHE) for details.
+Mr. Modpack is distributed under the terms of the GNU GPLv3 license. See [LICENSE](./LICENSE) for details.
