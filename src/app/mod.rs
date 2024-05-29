@@ -244,7 +244,7 @@ fn Collection(id: String, set_collections: WriteSignal<Vec<String>>) -> impl Int
                                             spawn_local(async move {
                                                 let zip = download_zip(collection_name.clone(), version, projects_2.clone()).await.unwrap();
 
-                                                window().open_with_url(&zip);
+                                                window().open_with_url(&zip).unwrap();
                                             });
                                             // for project in projects {
                                             //
@@ -378,15 +378,8 @@ async fn download_zip(
             .unwrap();
         println!("  {} : {}", latest_version.name, primary_file.url);
 
-        let jar = api
-            .v3
-            .get(primary_file.url)
-            .send()
-            .await
-            .unwrap()
-            .text()
-            .await
-            .unwrap();
+        let jar = api.v3.get(primary_file.url).send().await.unwrap();
+        let jar = jar.bytes().await.unwrap();
 
         let mut dst = dst.clone();
         dst.push(primary_file.filename);
