@@ -1,4 +1,7 @@
-use ferinth::{structures::project::Project, Ferinth};
+use ferinth::{
+    structures::{project::Project, version::Version},
+    Ferinth,
+};
 use reqwest::{Client, ClientBuilder};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
@@ -33,7 +36,7 @@ struct InnerCollection {
 #[derive(Debug)]
 pub struct ModrinthClient {
     v2: Ferinth,
-    v3: Client,
+    pub(crate) v3: Client,
     pub(crate) global_projects: RwLock<Vec<Project>>,
 }
 
@@ -70,6 +73,21 @@ impl ModrinthClient {
                 .unwrap(),
             global_projects: Default::default(),
         }
+    }
+
+    pub(crate) async fn get_project_versions(
+        &self,
+        id: &str,
+        loaders: &[&str],
+        game_versions: &[&str],
+    ) -> ApiResult<Vec<Version>> {
+        let versions = self
+            .v2
+            .list_versions_filtered(id, Some(loaders), Some(game_versions), None)
+            .await
+            .map_err(ApiErr::Ferinth)?;
+
+        Ok(versions)
     }
 
     pub(crate) async fn get_project(&self, id: &str) -> ApiResult<ProjectKey> {

@@ -11,9 +11,15 @@ use std::{
 use crate::error_template::{AppError, ErrorTemplate};
 use ferinth::structures::project::Project;
 use itertools::Itertools;
-use leptos::{html::Input, leptos_dom::logging::console_log, *};
+use leptos::{
+    html::{Iframe, Input},
+    leptos_dom::logging::console_log,
+    *,
+};
 use leptos_meta::*;
 use leptos_router::*;
+use leptos_use::use_window;
+use serde::{Deserialize, Serialize};
 
 use self::modrinth::{Collection, ProjectKey};
 
@@ -98,7 +104,7 @@ fn HomePage() -> impl IntoView {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 struct ReleaseVersion {
     major: u32,
     minor: u32,
@@ -190,6 +196,8 @@ fn Collection(id: String, set_collections: WriteSignal<Vec<String>>) -> impl Int
         });
     });
 
+    let downloader = create_node_ref::<Iframe>();
+
     view! {
         <Suspense
             fallback=|| view! {
@@ -202,8 +210,13 @@ fn Collection(id: String, set_collections: WriteSignal<Vec<String>>) -> impl Int
                 let close = close.clone();
                 move || {
                     let close = close.clone();
-                    collection.get().map(move |c| c.map(move |(collection, projects, available_versions)| view! {
+                    collection.get().map(move |c| c.map(move |(collection, projects, available_versions)| {
+                    let collection_name = collection.name.clone();
+                    view! {
+                    <iframe style="display:none;" node_ref=downloader/>
+
                     <h2>{collection.name}</h2>
+                    <p class="collection-id">{collection.id}</p>
 
                     <Spoiler close=close.clone()>
                     <div class="collection-table">
@@ -213,7 +226,10 @@ fn Collection(id: String, set_collections: WriteSignal<Vec<String>>) -> impl Int
                                 <th>
                                     "Mod"
                                 </th>
-                                {available_versions.iter().map(|(version, projects)| view! {
+                                {available_versions.clone().into_iter().map(|(version, projects)| {
+                                    let collection_name = collection_name.clone();
+                                    let projects_2 = projects.clone();
+                                    view! {
                                     <td>
                                         <span class="version">
                                             {version.to_string()}
@@ -222,13 +238,27 @@ fn Collection(id: String, set_collections: WriteSignal<Vec<String>>) -> impl Int
                                             {format!("{:.1}", (projects.len() as f64 / collection.projects.len() as f64) * 100.0)}
                                             "%"
                                         </span>
+                                        <button class="download" on:click=move |_| {
+                                            let collection_name = collection_name.clone();
+                                            let projects_2 = projects_2.clone();
+                                            spawn_local(async move {
+                                                let zip = download_zip(collection_name.clone(), version, projects_2.clone()).await.unwrap();
+
+                                                window().open_with_url(&zip);
+                                            });
+                                            // for project in projects {
+                                            //
+                                            // }
+                                        }>
+                                            "Download All"
+                                        </button>
                                         // " ("
                                         // {projects.len()}
                                         // " / "
                                         // {collection.projects.len()}
                                         // ")"
                                     </td>
-                                }).collect_view()}
+                                }}).collect_view()}
                             </tr>
 
                             {projects.into_iter().map(|(key, project)| view! {
@@ -251,7 +281,7 @@ fn Collection(id: String, set_collections: WriteSignal<Vec<String>>) -> impl Int
                     </table>
                     </div>
                     </Spoiler>
-                }))
+                }}))
             }}
         </Suspense>
     }
@@ -298,4 +328,71 @@ async fn get_collection(collection_id: String) -> Result<Collection, ServerFnErr
     api.get_collection(&collection_id)
         .await
         .map_err(ServerFnError::new)
+}
+
+#[server]
+async fn download_zip(
+    collection_name: String,
+    release_version: ReleaseVersion,
+    projects: HashSet<ProjectKey>,
+) -> Result<String, ServerFnError> {
+    let api: Arc<modrinth::ModrinthClient> = use_context().unwrap();
+
+    const LOADERS: &[&str] = &["fabric", "quilt"];
+
+    let game_version = release_version.to_string();
+    let game_versions: &[&str] = &[&game_version];
+
+    let global_projects = api.global_projects.read().await;
+
+    let mut dst = std::path::PathBuf::new();
+    dst.push(format!("{collection_name} ({game_version})"));
+
+    tokio::fs::create_dir(&dst).await.unwrap();
+
+    for project in projects {
+        let project = &global_projects[project.0];
+
+        let versions = api
+            .get_project_versions(&project.slug, LOADERS, game_versions)
+            .await
+            .map_err(ServerFnError::new)?;
+
+        if versions.is_empty() {
+            println!("nothing found for {} ({})", project.title, game_version);
+            continue;
+        }
+
+        println!("==={} ({})===", project.title, game_version);
+
+        let latest_version = versions
+            .into_iter()
+            .max_by_key(|v| v.version_number.clone())
+            .unwrap();
+
+        // todo: or_else(first_file)
+        let primary_file = latest_version
+            .files
+            .into_iter()
+            .find(|f| f.primary)
+            .unwrap();
+        println!("  {} : {}", latest_version.name, primary_file.url);
+
+        let jar = api
+            .v3
+            .get(primary_file.url)
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+
+        let mut dst = dst.clone();
+        dst.push(primary_file.filename);
+
+        tokio::fs::write(dst, jar).await.unwrap();
+    }
+
+    Ok("https://www.google.com".to_string())
 }
