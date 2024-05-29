@@ -3,13 +3,15 @@ pub mod modrinth;
 use std::{
     collections::{HashMap, HashSet},
     fmt::Display,
+    path::Path,
     rc::Rc,
     str::FromStr,
     sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use crate::error_template::{AppError, ErrorTemplate};
-use ferinth::structures::project::Project;
+use ferinth::structures::{project::Project, version::DependencyType, ID};
 use itertools::Itertools;
 use leptos::{
     html::{Iframe, Input},
@@ -18,7 +20,6 @@ use leptos::{
 };
 use leptos_meta::*;
 use leptos_router::*;
-use leptos_use::use_window;
 use serde::{Deserialize, Serialize};
 
 use self::modrinth::{Collection, ProjectKey};
@@ -330,6 +331,8 @@ async fn get_collection(collection_id: String) -> Result<Collection, ServerFnErr
         .map_err(ServerFnError::new)
 }
 
+const LOADERS: &[&str] = &["fabric", "quilt"];
+
 #[server]
 async fn download_zip(
     collection_name: String,
@@ -338,32 +341,47 @@ async fn download_zip(
 ) -> Result<String, ServerFnError> {
     let api: Arc<modrinth::ModrinthClient> = use_context().unwrap();
 
-    const LOADERS: &[&str] = &["fabric", "quilt"];
-
     let game_version = release_version.to_string();
     let game_versions: &[&str] = &[&game_version];
 
-    let global_projects = api.global_projects.read().await;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
 
-    let mut dst = std::path::PathBuf::new();
-    dst.push(format!("{collection_name} ({game_version})"));
+    let output_folder = format!("temp-download-all-{now}");
+    let output_folder: &Path = output_folder.as_ref();
 
-    tokio::fs::create_dir(&dst).await.unwrap();
+    tokio::fs::create_dir(output_folder).await.unwrap();
 
-    for project in projects {
+    let mut downloaded = HashSet::new();
+
+    let mut todo = projects.into_iter().map(|p| (p, 0)).collect_vec();
+
+    while let Some((project, ident)) = todo.pop() {
+        let global_projects = api.global_projects.read().await;
         let project = &global_projects[project.0];
 
         let versions = api
             .get_project_versions(&project.slug, LOADERS, game_versions)
-            .await
-            .map_err(ServerFnError::new)?;
+            .await?;
 
         if versions.is_empty() {
-            println!("nothing found for {} ({})", project.title, game_version);
+            println!(
+                "{}nothing found for {} ({})",
+                "  ".repeat(ident),
+                project.title,
+                game_versions[0]
+            );
             continue;
         }
 
-        println!("==={} ({})===", project.title, game_version);
+        println!(
+            "{}==={} ({})===",
+            "  ".repeat(ident),
+            project.title,
+            game_versions[0]
+        );
 
         let latest_version = versions
             .into_iter()
@@ -376,15 +394,47 @@ async fn download_zip(
             .into_iter()
             .find(|f| f.primary)
             .unwrap();
-        println!("  {} : {}", latest_version.name, primary_file.url);
+        println!(
+            "{}{} : {}",
+            "  ".repeat(ident + 1),
+            latest_version.name,
+            primary_file.filename
+        );
 
-        let jar = api.v3.get(primary_file.url).send().await.unwrap();
-        let jar = jar.bytes().await.unwrap();
+        let jar = api.download_file(primary_file.url).await.unwrap();
 
-        let mut dst = dst.clone();
+        let mut dst = output_folder.to_path_buf();
         dst.push(primary_file.filename);
 
         tokio::fs::write(dst, jar).await.unwrap();
+
+        downloaded.insert(project.id.clone());
+
+        // do this before calling `get_project`
+        // otherwise causes deadlock
+        drop(global_projects);
+
+        for dep in latest_version.dependencies {
+            let project_id = dep.project_id.unwrap();
+
+            if dep.dependency_type != DependencyType::Required {
+                println!("{}- {} is not required", "  ".repeat(ident + 1), project_id);
+                continue;
+            }
+
+            if downloaded.contains(&project_id) {
+                println!(
+                    "{}- {} already downloaded",
+                    "  ".repeat(ident + 1),
+                    project_id
+                );
+                continue;
+            }
+
+            let project = api.get_project(&project_id).await?;
+
+            todo.push((project, ident + 1));
+        }
     }
 
     Ok("https://www.google.com".to_string())

@@ -27,6 +27,8 @@ serde = { version = "1.0.201", features = ["derive"] }
 serde_json = "1.0.117"
 itertools = "0.13.0"
 lazy_static = "1.4.0"
+bytes = { version = "1.6.0", optional = true }
+futures = "0.3.30"
 
 [features]
 hydrate = ["leptos/hydrate", "leptos_meta/hydrate", "leptos_router/hydrate"]
@@ -43,6 +45,7 @@ ssr = [
     "dep:tracing",
     #"dep:ferinth",
     "dep:reqwest",
+    "dep:bytes"
 ]
 default = ["ssr"]
 

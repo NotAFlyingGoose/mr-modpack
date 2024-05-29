@@ -1486,8 +1486,10 @@ name = "mr-modpack"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "bytes",
  "console_error_panic_hook",
  "ferinth",
+ "futures",
  "http 1.1.0",
  "itertools 0.13.0",
  "lazy_static",

@@ -1,8 +1,9 @@
+use bytes::Bytes;
 use ferinth::{
     structures::{project::Project, version::Version},
     Ferinth,
 };
-use reqwest::{Client, ClientBuilder};
+use reqwest::{Client, ClientBuilder, IntoUrl};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
@@ -36,7 +37,7 @@ struct InnerCollection {
 #[derive(Debug)]
 pub struct ModrinthClient {
     v2: Ferinth,
-    pub(crate) v3: Client,
+    v3: Client,
     pub(crate) global_projects: RwLock<Vec<Project>>,
 }
 
@@ -75,19 +76,34 @@ impl ModrinthClient {
         }
     }
 
+    pub(crate) async fn download_file<U>(&self, url: U) -> ApiResult<Bytes>
+    where
+        U: IntoUrl,
+    {
+        self.v3
+            .get(url)
+            .send()
+            .await
+            .map_err(ApiErr::Reqwest)?
+            .bytes()
+            .await
+            .map_err(ApiErr::Reqwest)
+    }
+
     pub(crate) async fn get_project_versions(
         &self,
         id: &str,
         loaders: &[&str],
         game_versions: &[&str],
     ) -> ApiResult<Vec<Version>> {
-        let versions = self
-            .v2
+        self.v2
             .list_versions_filtered(id, Some(loaders), Some(game_versions), None)
             .await
-            .map_err(ApiErr::Ferinth)?;
+            .map_err(ApiErr::Ferinth)
+    }
 
-        Ok(versions)
+    pub(crate) async fn get_version(&self, id: &str) -> ApiResult<Version> {
+        self.v2.get_version(id).await.map_err(ApiErr::Ferinth)
     }
 
     pub(crate) async fn get_project(&self, id: &str) -> ApiResult<ProjectKey> {
