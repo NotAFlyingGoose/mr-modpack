@@ -20,6 +20,7 @@ use leptos::{
 };
 use leptos_meta::*;
 use leptos_router::*;
+use leptos_use::{use_cookie, utils::JsonCodec};
 use serde::{Deserialize, Serialize};
 
 use self::modrinth::{Collection, ProjectKey};
@@ -60,9 +61,12 @@ pub fn App() -> impl IntoView {
 fn HomePage() -> impl IntoView {
     let input: NodeRef<Input> = create_node_ref();
 
-    // let (collections, set_collections, _) =
-    //     use_local_storage::<Vec<String>, JsonCodec>("modrinth_collections");
-    let (collections, set_collections) = create_signal(Vec::<String>::new());
+    let (collections, set_collections) =
+        use_cookie::<Vec<String>, JsonCodec>("modrinth_collections");
+
+    if collections.get_untracked().is_none() {
+        set_collections(Default::default());
+    }
 
     view! {
         <h1>"Mr Modpack"</h1>
@@ -79,9 +83,14 @@ fn HomePage() -> impl IntoView {
             }
 
             set_collections.update(|collections| {
-                if collections.iter().all(|c| **c != val) {
-                    console_log("pushing collection");
-                    collections.push(val);
+                if let Some(collections) = collections {
+                    if collections.iter().all(|c| *c != val) {
+                        console_log("pushing collection");
+                        collections.push(val);
+                    }
+                } else {
+                    console_log("setting collection");
+                    *collections = Some(vec![val]);
                 }
             });
 
@@ -93,7 +102,7 @@ fn HomePage() -> impl IntoView {
         <div id="content">
             <For
                 // a function that returns the items we're iterating over; a signal is fine
-                each=move || collections.get().into_iter().rev()
+                each=move || collections.get().unwrap_or_default().into_iter().rev()
                 // a unique key for each item
                 key=|id| id.clone()
                 // renders each item to a view
@@ -141,7 +150,7 @@ impl Display for ReleaseVersion {
 }
 
 #[component]
-fn Collection(id: String, set_collections: WriteSignal<Vec<String>>) -> impl IntoView {
+fn Collection(id: String, set_collections: WriteSignal<Option<Vec<String>>>) -> impl IntoView {
     let cloned_id = id.clone();
     let collection = create_local_resource(
         move || cloned_id.clone(),
@@ -187,17 +196,17 @@ fn Collection(id: String, set_collections: WriteSignal<Vec<String>>) -> impl Int
     let close: Rc<dyn Fn()> = Rc::new(move || {
         let cloned_id = id.clone();
         set_collections.update(move |collections| {
-            collections.remove(
-                collections
-                    .iter()
-                    .find_position(|c| *c == &cloned_id)
-                    .unwrap()
-                    .0,
-            );
+            if let Some(collections) = collections {
+                collections.remove(
+                    collections
+                        .iter()
+                        .find_position(|c| *c == &cloned_id)
+                        .unwrap()
+                        .0,
+                );
+            }
         });
     });
-
-    let downloader = create_node_ref::<Iframe>();
 
     view! {
         <Suspense
@@ -214,8 +223,6 @@ fn Collection(id: String, set_collections: WriteSignal<Vec<String>>) -> impl Int
                     collection.get().map(move |c| c.map(move |(collection, projects, available_versions)| {
                     let collection_name = collection.name.clone();
                     view! {
-                    <iframe style="display:none;" node_ref=downloader/>
-
                     <h2>{collection.name}</h2>
                     <p class="collection-id">{collection.id}</p>
 
