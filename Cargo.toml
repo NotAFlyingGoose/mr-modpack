@@ -121,3 +121,6 @@ lib-default-features = false
 #
 # Optional. Defaults to "release".
 lib-profile-release = "wasm-release"
+
+# Add hashes to frontend files to ensure cache busting
+hash-files = true

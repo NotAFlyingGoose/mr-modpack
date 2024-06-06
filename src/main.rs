@@ -1,9 +1,11 @@
 #[cfg(feature = "ssr")]
 #[tokio::main]
 async fn main() {
+    use std::net::{SocketAddr, SocketAddrV4};
     use std::sync::Arc;
 
     use axum::Router;
+    use leptos::leptos_config::Env;
     use leptos::*;
     use leptos_axum::{generate_route_list, LeptosRoutes};
     use mr_modpack::app::modrinth::*;
@@ -16,9 +18,21 @@ async fn main() {
     // Alternately a file can be specified such as Some("Cargo.toml")
     // The file would need to be included with the executable when moved to deployment
     let conf = get_configuration(None).await.unwrap();
-    let leptos_options = conf.leptos_options;
+    let mut leptos_options = conf.leptos_options;
+    leptos_options.hash_files = true;
+    if leptos_options.env == Env::PROD {
+        // in the dockerfile, hash.txt will actually be here and not "./hash.txt'
+        leptos_options.hash_file = "/app/target/release/hash.txt".to_string();
+    }
+
+    let addr = match std::env::var("PORT") {
+        Ok(port) => SocketAddr::V4(SocketAddrV4::new(
+            "0.0.0.0".parse().unwrap(),
+            port.parse().expect("`PORT` to be an u16"),
+        )),
+        _ => leptos_options.site_addr,
+    };
     let cloned_leptos_options = leptos_options.clone();
-    let addr = leptos_options.site_addr;
     let routes = generate_route_list(App);
 
     let modrinth = Arc::new(ModrinthClient::default());
