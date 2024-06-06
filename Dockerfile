@@ -43,4 +43,4 @@ ENV LEPTOS_HASH_FILES true
 RUN cargo leptos build --release -vv
 
 # start the application
-CMD ./target/x86_64-unknown-linux-gnu/release/site
+CMD ./target/x86_64-unknown-linux-gnu/release/mr-modpack
