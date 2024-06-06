@@ -7,7 +7,7 @@ use std::{
     rc::Rc,
     str::FromStr,
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use crate::error_template::{AppError, ErrorTemplate};
@@ -222,6 +222,7 @@ fn Collection(id: String, set_collections: WriteSignal<Option<Vec<String>>>) -> 
                     let close = close.clone();
                     collection.get().map(move |c| c.map(move |(collection, projects, available_versions)| {
                     let collection_name = collection.name.clone();
+
                     view! {
                     <h2>{collection.name}</h2>
                     <p class="collection-id">{collection.id}</p>
@@ -237,6 +238,7 @@ fn Collection(id: String, set_collections: WriteSignal<Option<Vec<String>>>) -> 
                                 {available_versions.clone().into_iter().map(|(version, projects)| {
                                     let collection_name = collection_name.clone();
                                     let projects_2 = projects.clone();
+                                    let download_loading = create_rw_signal(false);
                                     view! {
                                     <td>
                                         <span class="version">
@@ -246,25 +248,37 @@ fn Collection(id: String, set_collections: WriteSignal<Option<Vec<String>>>) -> 
                                             {format!("{:.1}", (projects.len() as f64 / collection.projects.len() as f64) * 100.0)}
                                             "%"
                                         </span>
-                                        <button class="download" on:click=move |_| {
-                                            let collection_name = collection_name.clone();
-                                            let projects_2 = projects_2.clone();
-                                            spawn_local(async move {
-                                                let zip = download_zip(collection_name.clone(), version, projects_2.clone()).await.unwrap();
+                                        <button
+                                            class={move || if download_loading.get() {
+                                                "download downloading"
+                                            } else {
+                                                "download"
+                                            }}
+                                            on:click=move |_| {
+                                                if download_loading.get_untracked() {
+                                                    return;
+                                                }
 
-                                                window().open_with_url(&zip).unwrap();
-                                            });
-                                            // for project in projects {
-                                            //
-                                            // }
-                                        }>
-                                            "Download All"
+                                                let collection_name = collection_name.clone();
+                                                let projects_2 = projects_2.clone();
+                                                download_loading.set(true);
+
+                                                spawn_local(async move {
+                                                    let zip = download_zip(collection_name.clone(), version, projects_2.clone()).await.unwrap();
+
+                                                    download_loading.set(false);
+
+                                                    window().open_with_url(&zip).unwrap();
+                                                });
+                                            }
+                                        >
+                                            {move || if download_loading.get() {
+                                                "Downloading..."
+                                            } else {
+                                                "Download all"
+                                            }}
                                         </button>
-                                        // " ("
-                                        // {projects.len()}
-                                        // " / "
-                                        // {collection.projects.len()}
-                                        // ")"
+
                                     </td>
                                 }}).collect_view()}
                             </tr>
@@ -300,11 +314,11 @@ fn Spoiler(close: Rc<dyn Fn()>, children: Children) -> impl IntoView {
     let visible = create_rw_signal(true);
 
     view! {
-        <button on:click=move |_| visible.update(|visible| *visible = !*visible)>
+        <button class="margin-all" on:click=move |_| visible.update(|visible| *visible = !*visible)>
             {move || if visible.get() { "Hide" } else { "Show" }}
         </button>
-        <button on:click=move |_| close()>
-            "X"
+        <button class="margin-all" on:click=move |_| close()>
+            "Remove"
         </button>
         <div class={move || if visible.get() { "spoiler" } else { "spoiler hidden" }}>
             {children()}
@@ -346,6 +360,8 @@ async fn download_zip(
     release_version: ReleaseVersion,
     projects: HashSet<ProjectKey>,
 ) -> Result<String, ServerFnError> {
+    use async_zip::{base::write::ZipFileWriter, Compression, ZipEntryBuilder};
+
     let api: Arc<modrinth::ModrinthClient> = use_context().unwrap();
 
     let game_version = release_version.to_string();
@@ -356,15 +372,19 @@ async fn download_zip(
         .unwrap()
         .as_millis();
 
-    let output_folder = format!("temp-download-all-{now}");
-    let output_folder: &Path = output_folder.as_ref();
+    let opts: LeptosOptions = use_context().unwrap();
+    let output_folder = AsRef::<Path>::as_ref(&opts.site_root).join("temp-download-all");
+    let _ = tokio::fs::create_dir(&output_folder).await;
 
-    tokio::fs::create_dir(output_folder).await.unwrap();
+    let filename = output_folder.join(format!("{}-{now}.zip", collection_name));
+    let mut zip = tokio::fs::File::create(&filename).await.unwrap();
+    let mut zip = ZipFileWriter::with_tokio(&mut zip);
 
     let mut downloaded = HashSet::new();
 
     let mut todo = projects.into_iter().map(|p| (p, 0)).collect_vec();
 
+    // todo: do multiple downloads simultaneously
     while let Some((project, ident)) = todo.pop() {
         let global_projects = api.global_projects.read().await;
         let project = &global_projects[project.0];
@@ -398,9 +418,9 @@ async fn download_zip(
         // todo: or_else(first_file)
         let primary_file = latest_version
             .files
-            .into_iter()
+            .iter()
             .find(|f| f.primary)
-            .unwrap();
+            .unwrap_or_else(|| latest_version.files.first().unwrap());
         println!(
             "{}{} : {}",
             "  ".repeat(ident + 1),
@@ -408,12 +428,14 @@ async fn download_zip(
             primary_file.filename
         );
 
-        let jar = api.download_file(primary_file.url).await.unwrap();
+        let jar = api.download_file(primary_file.url.clone()).await.unwrap();
 
         let mut dst = output_folder.to_path_buf();
-        dst.push(primary_file.filename);
+        dst.push(&primary_file.filename);
 
-        tokio::fs::write(dst, jar).await.unwrap();
+        let builder =
+            ZipEntryBuilder::new(primary_file.filename.clone().into(), Compression::Deflate);
+        zip.write_entry_whole(builder, &jar).await.unwrap();
 
         downloaded.insert(project.id.clone());
 
@@ -444,5 +466,14 @@ async fn download_zip(
         }
     }
 
-    Ok("https://www.google.com".to_string())
+    println!("finished download!");
+
+    zip.close().await.unwrap();
+
+    tokio::task::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(2 * 60)).await;
+        tokio::fs::remove_file(filename).await.unwrap()
+    });
+
+    Ok(format!("/temp-download-all/{}-{now}.zip", collection_name))
 }

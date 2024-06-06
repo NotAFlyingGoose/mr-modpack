@@ -89,6 +89,7 @@ a {
   &:hover {
     text-decoration: underline;
     color: white;
+    text-shadow: 0 3px 40px white;
     // there are some <a> tags without an href, so this makes sure they look like a regular link
     cursor: pointer;
   }
@@ -189,4 +190,50 @@ tbody {
 
 .hidden {
   display: none;
+}
+
+$input-background: color.adjust($light-background, $lightness: +15%);
+
+button {
+  font-family: inherit;
+  font-size: 1rem;
+  color: lightgray;
+
+  border-radius: 1em;
+  border: none;
+
+  padding: 0.4em;
+  margin-top: 1em;
+  background-color: $input-background;
+
+  position: relative;
+  z-index: 1000000;
+
+  &.margin-all {
+    margin: 0.5em;
+  }
+
+  &.downloading {
+    background-color: color.adjust($input-background, $lightness: -7.5%) !important;
+    color: color.adjust(lightgray, $lightness: -10%) !important;
+    box-shadow: none !important;
+    cursor: default !important;
+  }
+
+  &:hover {
+    background-color: gray;
+    box-shadow: 0 3px 20px -10px gray;
+
+    color: white;
+
+    cursor: pointer;
+  }
+
+  &:focus {
+    background-color: $focus-color;
+    box-shadow: 0 3px 20px -10px $focus-color;
+
+    color: white;
+    outline: none;
+  }
 }

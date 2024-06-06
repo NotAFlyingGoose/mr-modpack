@@ -7,7 +7,7 @@ pkg
 **/*.rs.bk
 **/.DS_Store
 
-temp-download-all-*/
+temp-download-all/
 
 # node e2e test tools and outputs
 node_modules/
