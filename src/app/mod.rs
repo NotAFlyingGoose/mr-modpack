@@ -298,7 +298,9 @@ fn Collection(id: String, set_collections: WriteSignal<Option<Vec<String>>>) -> 
                                             } else {
                                                 "download"
                                             }}
-                                            on:click=move |_| {
+                                            on:click=move |ev| {
+                                                ev.prevent_default();
+
                                                 if download_loading.get_untracked() {
                                                     return;
                                                 }
@@ -358,10 +360,16 @@ fn Spoiler(close: Rc<dyn Fn()>, children: Children) -> impl IntoView {
     let visible = create_rw_signal(true);
 
     view! {
-        <button class="margin-all" on:click=move |_| visible.update(|visible| *visible = !*visible)>
+        <button class="margin-all" on:click=move |ev| {
+            ev.prevent_default();
+            visible.update(|visible| *visible = !*visible)
+        }>
             {move || if visible.get() { "Hide" } else { "Show" }}
         </button>
-        <button class="margin-all" on:click=move |_| close()>
+        <button class="margin-all" on:click=move |ev| {
+            ev.prevent_default();
+            close();
+        }>
             "Remove"
         </button>
         <div class={move || if visible.get() { "spoiler" } else { "spoiler hidden" }}>
@@ -396,7 +404,7 @@ async fn get_collection(collection_id: String) -> Result<Collection, ServerFnErr
         .map_err(ServerFnError::new)
 }
 
-const LOADERS: &[&str] = &["fabric", "quilt"];
+const LOADERS: &[&str] = &["fabric"];
 
 #[server]
 async fn download_zip(
@@ -433,13 +441,22 @@ async fn download_zip(
         let global_projects = api.global_projects.read().await;
         let project = &global_projects[project.0];
 
+        if downloaded.contains(&project.id) {
+            println!(
+                "|{}{} already downloaded",
+                "  ".repeat(ident + 1),
+                project.id
+            );
+            continue;
+        }
+
         let versions = api
             .get_project_versions(&project.slug, LOADERS, game_versions)
             .await?;
 
         if versions.is_empty() {
             println!(
-                "{}nothing found for {} ({})",
+                "|{}nothing found for {} ({})",
                 "  ".repeat(ident),
                 project.title,
                 game_versions[0]
@@ -448,7 +465,7 @@ async fn download_zip(
         }
 
         println!(
-            "{}==={} ({})===",
+            "|{}==={} ({})===",
             "  ".repeat(ident),
             project.title,
             game_versions[0]
@@ -460,10 +477,14 @@ async fn download_zip(
                 let semver = v
                     .version_number
                     .replace(&game_version, "")
+                    .replace(
+                        &format!("{}.{}", release_version.major, release_version.minor),
+                        "",
+                    )
                     .parse::<SemanticVersion>()
                     .unwrap_or_else(|_| {
                         console_error(&format!(
-                            "{} wasn't parsable for {}!",
+                            "|{} wasn't parsable for {}!",
                             v.version_number, project.title
                         ));
                         SemanticVersion {
@@ -475,7 +496,8 @@ async fn download_zip(
 
                 (v, semver)
             })
-            .max_by_key(|(_, semver)| *semver)
+            .max_by_key(|(v, _)| v.date_published)
+            //.max_by_key(|(_, semver)| *semver)
             .unwrap();
 
         // todo: or_else(first_file)
@@ -485,7 +507,7 @@ async fn download_zip(
             .find(|f| f.primary)
             .unwrap_or_else(|| latest_version.files.first().unwrap());
         println!(
-            "{}{} (v{}) : {}",
+            "|{}{} (v{}) : {}",
             "  ".repeat(ident + 1),
             latest_version.name,
             latest_semver,
@@ -511,13 +533,17 @@ async fn download_zip(
             let project_id = dep.project_id.unwrap();
 
             if dep.dependency_type != DependencyType::Required {
-                println!("{}- {} is not required", "  ".repeat(ident + 1), project_id);
+                println!(
+                    "|{}- {} is not required",
+                    "  ".repeat(ident + 1),
+                    project_id
+                );
                 continue;
             }
 
             if downloaded.contains(&project_id) {
                 println!(
-                    "{}- {} already downloaded",
+                    "|{}- {} already downloaded",
                     "  ".repeat(ident + 1),
                     project_id
                 );
@@ -652,6 +678,18 @@ mod tests {
                 major: 2,
                 minor: 4,
                 patch: 21,
+            })
+        )
+    }
+
+    #[test]
+    fn semver_puzzles() {
+        assert_eq!(
+            SemanticVersion::from_str("v8.1.20--Fabric"),
+            Ok(SemanticVersion {
+                major: 8,
+                minor: 1,
+                patch: 20,
             })
         )
     }
