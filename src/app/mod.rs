@@ -5,7 +5,10 @@ use std::{
     fmt::Display,
     path::Path,
     rc::Rc,
-    str::FromStr,
+    str::{
+        pattern::{Pattern, Searcher},
+        FromStr,
+    },
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -15,7 +18,7 @@ use ferinth::structures::{project::Project, version::DependencyType, ID};
 use itertools::Itertools;
 use leptos::{
     html::{Iframe, Input},
-    leptos_dom::logging::console_log,
+    leptos_dom::logging::{console_error, console_log},
     *,
 };
 use leptos_meta::*;
@@ -114,28 +117,67 @@ fn HomePage() -> impl IntoView {
     }
 }
 
+trait StrExt {
+    fn split_prefix<'a, P: Pattern<'a>>(&'a self, p: P) -> Option<(&'a str, &'a str)>;
+}
+
+impl StrExt for &str {
+    fn split_prefix<'a, P: Pattern<'a>>(&'a self, p: P) -> Option<(&'a str, &'a str)> {
+        let (start, _) = p.into_searcher(self).next_reject()?;
+        // `start` here is the start of the unmatched (rejected) substring, so that is our sole delimiting index
+        unsafe { Some((self.get_unchecked(..start), self.get_unchecked(start..))) }
+
+        // If constrained to strictly safe rust code, an alternative is:
+        // s.get(..start).zip(s.get(start..))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-struct ReleaseVersion {
+pub struct SemanticVersion {
     major: u32,
     minor: u32,
     patch: u32,
 }
 
-impl FromStr for ReleaseVersion {
+impl FromStr for SemanticVersion {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let first_dot = s.find('.').ok_or(())?;
-        let major: u32 = s[..first_dot].parse().map_err(|_| ())?;
-        let rest = &s[first_dot + 1..];
+        if s.is_empty() {
+            return Err(());
+        }
 
-        let second_dot = rest.find('.').ok_or(())?;
-        let minor: u32 = rest[..second_dot].parse().map_err(|_| ())?;
-        let rest = &rest[second_dot + 1..];
+        let (_, rest) = s
+            .split_prefix(|ch: char| !ch.is_numeric())
+            .unwrap_or((s, ""));
 
-        let patch: u32 = rest.parse().map_err(|_| ())?;
+        let (first, rest) = rest.split_prefix(char::is_numeric).unwrap_or((rest, ""));
+        // println!("({first}, {rest})");
+        let major: u32 = first.parse().map_err(|_| ())?;
 
-        Ok(ReleaseVersion {
+        let (minor, patch) = if let Some(rest) = rest.strip_prefix('.') {
+            let (first, rest) = rest.split_prefix(char::is_numeric).unwrap_or((rest, ""));
+            // println!("({first}, {rest})");
+            let minor: u32 = first.parse().map_err(|_| ())?;
+
+            let patch = if let Some(rest) = rest.strip_prefix('.') {
+                let (first, _) = rest
+                    .split_once(|ch: char| !ch.is_numeric())
+                    .unwrap_or((rest, ""));
+                // println!("({first}, {rest})");
+                let patch: u32 = first.parse().map_err(|_| ())?;
+
+                patch
+            } else {
+                0
+            };
+
+            (minor, patch)
+        } else {
+            (0, 0)
+        };
+
+        Ok(SemanticVersion {
             major,
             minor,
             patch,
@@ -143,7 +185,7 @@ impl FromStr for ReleaseVersion {
     }
 }
 
-impl Display for ReleaseVersion {
+impl Display for SemanticVersion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
     }
@@ -159,14 +201,14 @@ fn Collection(id: String, set_collections: WriteSignal<Option<Vec<String>>>) -> 
 
             let projects = get_projects(collection.projects.clone()).await?;
 
-            let mut available_versions: HashMap<ReleaseVersion, HashSet<ProjectKey>> =
+            let mut available_versions: HashMap<SemanticVersion, HashSet<ProjectKey>> =
                 HashMap::new();
 
             for (key, project) in projects.iter() {
                 for version in project
                     .game_versions
                     .iter()
-                    .filter_map(|v| v.parse::<ReleaseVersion>().ok())
+                    .filter_map(|v| v.parse::<SemanticVersion>().ok())
                 {
                     available_versions
                         .entry(version)
@@ -207,6 +249,8 @@ fn Collection(id: String, set_collections: WriteSignal<Option<Vec<String>>>) -> 
             }
         });
     });
+    // this is easier than having to deal with Fn vs FnOnce hell
+    let (close, _) = create_signal(close);
 
     view! {
         <Suspense
@@ -216,10 +260,10 @@ fn Collection(id: String, set_collections: WriteSignal<Option<Vec<String>>>) -> 
                 </p>
             }
         >
-            {
-                let close = close.clone();
-                move || {
-                    let close = close.clone();
+            <ErrorBoundary
+                fallback=|_| {view! { "There was an error" }}
+            >
+                {move || {
                     collection.get().map(move |c| c.map(move |(collection, projects, available_versions)| {
                     let collection_name = collection.name.clone();
 
@@ -227,7 +271,7 @@ fn Collection(id: String, set_collections: WriteSignal<Option<Vec<String>>>) -> 
                     <h2>{collection.name}</h2>
                     <p class="collection-id">{collection.id}</p>
 
-                    <Spoiler close=close.clone()>
+                    <Spoiler close={close.get_untracked()}>
                     <div class="collection-table">
                     <table>
                         <tbody>
@@ -303,8 +347,8 @@ fn Collection(id: String, set_collections: WriteSignal<Option<Vec<String>>>) -> 
                     </table>
                     </div>
                     </Spoiler>
-                }}))
-            }}
+                }}))}}
+            </ErrorBoundary>
         </Suspense>
     }
 }
@@ -357,7 +401,7 @@ const LOADERS: &[&str] = &["fabric", "quilt"];
 #[server]
 async fn download_zip(
     collection_name: String,
-    release_version: ReleaseVersion,
+    release_version: SemanticVersion,
     projects: HashSet<ProjectKey>,
 ) -> Result<String, ServerFnError> {
     use async_zip::{base::write::ZipFileWriter, Compression, ZipEntryBuilder};
@@ -410,9 +454,28 @@ async fn download_zip(
             game_versions[0]
         );
 
-        let latest_version = versions
+        let (latest_version, latest_semver) = versions
             .into_iter()
-            .max_by_key(|v| v.version_number.clone())
+            .map(|v| {
+                let semver = v
+                    .version_number
+                    .replace(&game_version, "")
+                    .parse::<SemanticVersion>()
+                    .unwrap_or_else(|_| {
+                        console_error(&format!(
+                            "{} wasn't parsable for {}!",
+                            v.version_number, project.title
+                        ));
+                        SemanticVersion {
+                            major: 0,
+                            minor: 0,
+                            patch: 0,
+                        }
+                    });
+
+                (v, semver)
+            })
+            .max_by_key(|(_, semver)| *semver)
             .unwrap();
 
         // todo: or_else(first_file)
@@ -422,9 +485,10 @@ async fn download_zip(
             .find(|f| f.primary)
             .unwrap_or_else(|| latest_version.files.first().unwrap());
         println!(
-            "{}{} : {}",
+            "{}{} (v{}) : {}",
             "  ".repeat(ident + 1),
             latest_version.name,
+            latest_semver,
             primary_file.filename
         );
 
@@ -476,4 +540,119 @@ async fn download_zip(
     });
 
     Ok(format!("/temp-download-all/{}-{now}.zip", collection_name))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use crate::app::SemanticVersion;
+
+    #[test]
+    fn semver_simple() {
+        assert_eq!(
+            SemanticVersion::from_str("1.20.0"),
+            Ok(SemanticVersion {
+                major: 1,
+                minor: 20,
+                patch: 0
+            })
+        )
+    }
+
+    #[test]
+    fn semver_v_prefix() {
+        assert_eq!(
+            SemanticVersion::from_str("v10.19.15"),
+            Ok(SemanticVersion {
+                major: 10,
+                minor: 19,
+                patch: 15
+            })
+        )
+    }
+
+    #[test]
+    fn semver_dash_postfix() {
+        assert_eq!(
+            SemanticVersion::from_str("v10.19.15-1.20.0"),
+            Ok(SemanticVersion {
+                major: 10,
+                minor: 19,
+                patch: 15
+            })
+        )
+    }
+
+    #[test]
+    fn semver_word_postfix() {
+        assert_eq!(
+            SemanticVersion::from_str("101.190.230Fabric"),
+            Ok(SemanticVersion {
+                major: 101,
+                minor: 190,
+                patch: 230
+            })
+        )
+    }
+
+    #[test]
+    fn semver_major_only() {
+        assert_eq!(
+            SemanticVersion::from_str("2"),
+            Ok(SemanticVersion {
+                major: 2,
+                minor: 0,
+                patch: 0
+            })
+        )
+    }
+
+    #[test]
+    fn semver_major_and_patch_only() {
+        assert_eq!(
+            SemanticVersion::from_str("1.5"),
+            Ok(SemanticVersion {
+                major: 1,
+                minor: 5,
+                patch: 0
+            })
+        )
+    }
+
+    #[test]
+    fn semver_dash_prefix_and_more() {
+        assert_eq!(
+            SemanticVersion::from_str("-6.57-forge+fabric"),
+            Ok(SemanticVersion {
+                major: 6,
+                minor: 57,
+                patch: 0
+            })
+        )
+    }
+
+    #[test]
+    fn semver_plus_postfix_and_more() {
+        assert_eq!(
+            SemanticVersion::from_str("2.1.0+1.20.1"),
+            Ok(SemanticVersion {
+                major: 2,
+                minor: 1,
+                patch: 0
+            })
+        )
+    }
+
+    #[test]
+    fn semver_quilt() {
+        assert_eq!(
+            SemanticVersion::from_str("quilt--2.4.21"),
+            Ok(SemanticVersion {
+                major: 2,
+                minor: 4,
+                patch: 21,
+            })
+        )
+    }
 }

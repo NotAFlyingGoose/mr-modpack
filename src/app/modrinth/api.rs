@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use bytes::Bytes;
 use ferinth::{
     structures::{project::Project, version::Version},
@@ -5,7 +7,7 @@ use ferinth::{
 };
 use reqwest::{Client, ClientBuilder, IntoUrl};
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
+use tokio::{sync::RwLock, time::Interval};
 
 use super::{Collection, ProjectID, ProjectKey, UserID};
 
@@ -38,6 +40,7 @@ struct InnerCollection {
 pub struct ModrinthClient {
     v2: Ferinth,
     v3: Client,
+    request_window: RwLock<Interval>,
     pub(crate) global_projects: RwLock<Vec<Project>>,
 }
 
@@ -66,20 +69,30 @@ impl ModrinthClient {
             user_agent.push(')');
         }
 
+        let mut request_window = tokio::time::interval(Duration::from_secs_f32(60.0 / 250.0));
+        request_window.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
         Self {
             v2: Ferinth::new(name, version, contact, None).unwrap(),
             v3: ClientBuilder::default()
                 .user_agent(user_agent)
                 .build()
                 .unwrap(),
+            request_window: RwLock::new(request_window),
             global_projects: Default::default(),
         }
+    }
+
+    async fn wait_for_window(&self) {
+        let mut lock = self.request_window.write().await;
+        lock.tick().await;
     }
 
     pub(crate) async fn download_file<U>(&self, url: U) -> ApiResult<Bytes>
     where
         U: IntoUrl,
     {
+        self.wait_for_window().await;
         self.v3
             .get(url)
             .send()
@@ -96,6 +109,7 @@ impl ModrinthClient {
         loaders: &[&str],
         game_versions: &[&str],
     ) -> ApiResult<Vec<Version>> {
+        self.wait_for_window().await;
         self.v2
             .list_versions_filtered(id, Some(loaders), Some(game_versions), None)
             .await
@@ -103,10 +117,12 @@ impl ModrinthClient {
     }
 
     pub(crate) async fn get_version(&self, id: &str) -> ApiResult<Version> {
+        self.wait_for_window().await;
         self.v2.get_version(id).await.map_err(ApiErr::Ferinth)
     }
 
     pub(crate) async fn get_project(&self, id: &str) -> ApiResult<ProjectKey> {
+        self.wait_for_window().await;
         let project = self.v2.get_project(id).await.map_err(ApiErr::Ferinth)?;
 
         let mut global_projects = self.global_projects.write().await;
@@ -117,6 +133,7 @@ impl ModrinthClient {
     }
 
     pub(crate) async fn get_collection(&self, id: &str) -> ApiResult<Collection> {
+        self.wait_for_window().await;
         let response = self
             .v3
             .get(format!("{MODRINTH_ENDPOINT}collection/{}", id))
